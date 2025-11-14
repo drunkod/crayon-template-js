@@ -1,7 +1,12 @@
 'use client';
 
-import { CrayonChat } from "@crayonai/react-ui";
+import dynamic from "next/dynamic";
 import "@crayonai/react-ui/styles/index.css";
+
+const CrayonChat = dynamic(
+  () => import("@crayonai/react-ui").then((mod) => mod.CrayonChat),
+  { ssr: false }
+);
 
 const processMessage = async ({ threadId, messages, abortController }) => {
   const response = await fetch("/api/chat", {
