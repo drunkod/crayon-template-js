@@ -6,7 +6,7 @@ This is a JavaScript template demonstrating how to use the [Crayon](https://cray
 
 - Node.js (v18 or higher recommended)
 - pnpm (v8 or higher recommended)
-- OpenRouter API key
+- OpenAI API key
 
 ## Getting Started
 
@@ -18,12 +18,10 @@ pnpm install
 
 2. Set up your environment variables:
    - Create a `.env.local` file in the root directory
-   - Add your OpenRouter API key and other required variables:
+   - Add your OpenAI API key:
 
 ```bash
-OPENROUTER_API_KEY="your_openrouter_api_key_here"
-OPENROUTER_API_BASE="https://openrouter.ai/api/v1"
-OPENROUTER_SITE_URL="http://localhost:4000"
+OPENAI_API_KEY=your_api_key_here
 ```
 
 3. Run the development server:
@@ -32,7 +30,7 @@ OPENROUTER_SITE_URL="http://localhost:4000"
 pnpm dev
 ```
 
-4. Open your browser and navigate to [http://localhost:4000](http://localhost:4000)
+4. Open your browser and navigate to [http://localhost:3000](http://localhost:3000)
 
 ## Project Structure
 

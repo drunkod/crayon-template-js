@@ -8,21 +8,26 @@ import {
 
 export async function POST(req) {
   const { messages } = await req.json();
+  
+  // Configure OpenAI client to use OpenRouter
   const client = new OpenAI({
-    baseURL: process.env.OPENROUTER_API_BASE,
     apiKey: process.env.OPENROUTER_API_KEY,
+    baseURL: process.env.OPENROUTER_API_BASE,
     defaultHeaders: {
       "HTTP-Referer": process.env.OPENROUTER_SITE_URL,
-      "X-Title": "Crayon Template JS",
+      "X-Title": "Crayon Chat",
     },
   });
+
   const llmStream = await client.chat.completions.create({
-    model: "openai/gpt-3.5-turbo",
+    model: process.env.OPENROUTER_MODEL || "kwaipilot/kat-coder-pro:free",
     messages: toOpenAIMessages(messages),
     stream: true,
     response_format: templatesToResponseFormat(),
   });
+  
   const responseStream = fromOpenAICompletion(llmStream);
+  
   return new NextResponse(responseStream, {
     headers: {
       "Content-Type": "text/event-stream",
