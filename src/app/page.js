@@ -1,5 +1,6 @@
 'use client';
 import dynamic from 'next/dynamic';
+import { allTemplates } from './templates';
 
 // Dynamically import CrayonChat to avoid SSR hydration issues
 const CrayonChat = dynamic(
@@ -30,6 +31,7 @@ export default function Home() {
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100">
       <CrayonChat
         processMessage={processMessage}
+        templates={allTemplates}
         placeholder="Ask me about the weather... (e.g., 'What's the weather in Tokyo?')"
       />
     </div>
