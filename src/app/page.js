@@ -1,7 +1,13 @@
 'use client';
-import { CrayonChat } from "@crayonai/react-ui";
+import dynamic from 'next/dynamic';
+
+// Dynamically import CrayonChat to avoid SSR hydration issues
+const CrayonChat = dynamic(
+  () => import("@crayonai/react-ui").then(mod => ({ default: mod.CrayonChat })),
+  { ssr: false }
+);
+
 import "@crayonai/react-ui/styles/index.css";
-import { WeatherCard } from "./components/WeatherCard";
 
 const processMessage = async ({ threadId, messages, abortController }) => {
   const response = await fetch("/api/chat", {
@@ -19,17 +25,11 @@ const processMessage = async ({ threadId, messages, abortController }) => {
   return response;
 };
 
-// Custom renderer for weather data
-const customRenderers = {
-  WeatherCard: WeatherCard,
-};
-
 export default function Home() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100">
       <CrayonChat
         processMessage={processMessage}
-        customRenderers={customRenderers}
         placeholder="Ask me about the weather... (e.g., 'What's the weather in Tokyo?')"
       />
     </div>
