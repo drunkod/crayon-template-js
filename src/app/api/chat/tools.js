@@ -1,7 +1,10 @@
 /**
  * Weather tool that fetches real weather data from Open-Meteo API
  * No API key required!
+ * Can also use mock data when USE_MOCK_WEATHER env var is set to "true"
  */
+
+import { getMockWeather } from './mockTools';
 
 // Get coordinates from city name
 async function getCoordinates(location) {
@@ -75,6 +78,12 @@ function getWeatherIcon(code) {
 // Main weather function
 export async function getWeather(location) {
   try {
+    // Use mock data if enabled
+    if (process.env.USE_MOCK_WEATHER === "true") {
+      console.log(`[MOCK MODE] Fetching weather for ${location}`);
+      return await getMockWeather(location);
+    }
+
     // Get coordinates
     const { latitude, longitude, name, country } = await getCoordinates(
       location,

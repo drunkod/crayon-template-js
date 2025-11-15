@@ -11,30 +11,81 @@ import { systemPrompt } from "./systemPrompt";
 // In-memory message store (per thread)
 const messageStore = new Map();
 
-// Retry helper function
-async function retryWithBackoff(fn, maxRetries = 3, initialDelay = 1000) {
-  for (let i = 0; i < maxRetries; i++) {
-    try {
-      return await fn();
-    } catch (error) {
-      if (error.status === 429 && i < maxRetries - 1) {
-        const delay = initialDelay * Math.pow(2, i);
-        console.log(`Rate limited. Retrying in ${delay}ms... (attempt ${i + 1}/${maxRetries})`);
-        await new Promise(resolve => setTimeout(resolve, delay));
-      } else {
-        throw error;
-      }
+// ALL available free models from OpenRouter
+const ALL_FREE_MODELS = [
+  "deepseek/deepseek-r1:free",
+  "google/gemini-2.0-flash-exp:free",
+  "meta-llama/llama-3.3-70b-instruct:free",
+  "qwen/qwen-2.5-coder-32b-instruct:free",
+  "meta-llama/llama-3.2-3b-instruct:free",
+  "qwen/qwen-2.5-72b-instruct:free",
+  "nousresearch/hermes-3-llama-3.1-405b:free",
+  "mistralai/mistral-nemo:free",
+  "mistralai/mistral-7b-instruct:free",
+  "google/gemini-flash-1.5:free",
+  "microsoft/phi-3-mini-128k-instruct:free",
+];
+
+// Track failed models to avoid retrying them immediately
+const failedModels = new Map(); // model -> timestamp
+
+// Clean up failed models older than 5 minutes
+function cleanupFailedModels() {
+  const fiveMinutesAgo = Date.now() - 5 * 60 * 1000;
+  for (const [model, timestamp] of failedModels.entries()) {
+    if (timestamp < fiveMinutesAgo) {
+      failedModels.delete(model);
     }
   }
 }
 
-// Get available fallback models
-const FALLBACK_MODELS = [
-  "kwaipilot/kat-coder-pro:free",
-  "google/gemini-flash-1.5:free",
-  "meta-llama/llama-3.2-3b-instruct:free",
-  "microsoft/phi-3-mini-128k-instruct:free",
-];
+// Get available models (excluding recently failed ones)
+function getAvailableModels() {
+  cleanupFailedModels();
+  return ALL_FREE_MODELS.filter(model => !failedModels.has(model));
+}
+
+// Mark model as failed
+function markModelFailed(model) {
+  failedModels.set(model, Date.now());
+  console.log(`Marked ${model} as failed. Available models: ${getAvailableModels().length}`);
+}
+
+// Try multiple models until one succeeds
+async function tryModelsUntilSuccess(client, modelList, requestFn) {
+  const availableModels = modelList.filter(m => !failedModels.has(m));
+
+  if (availableModels.length === 0) {
+    console.log("All models failed recently. Clearing failed models cache...");
+    failedModels.clear();
+    availableModels.push(...modelList);
+  }
+
+  let lastError;
+
+  for (const model of availableModels) {
+    try {
+      console.log(`Trying model: ${model}`);
+      const response = await requestFn(model);
+      console.log(`✓ Success with ${model}`);
+      return { response, modelUsed: model };
+    } catch (error) {
+      console.log(`✗ Failed with ${model}: ${error.message}`);
+      lastError = error;
+
+      // Only mark as failed if it's a rate limit error
+      if (error.status === 429 || error.message?.includes("rate-limit")) {
+        markModelFailed(model);
+      }
+
+      // Continue to next model
+      continue;
+    }
+  }
+
+  // All models failed
+  throw lastError || new Error("All models are currently unavailable. Please try again later.");
+}
 
 export async function POST(req) {
   try {
@@ -64,48 +115,27 @@ export async function POST(req) {
       },
     });
 
-    const modelToUse = process.env.OPENROUTER_MODEL || FALLBACK_MODELS[0];
+    // Start with preferred model, but prepare to try others
+    const preferredModel = process.env.OPENROUTER_MODEL || ALL_FREE_MODELS[0];
+    const modelsToTry = [
+      preferredModel,
+      ...ALL_FREE_MODELS.filter(m => m !== preferredModel)
+    ];
 
-    // Make LLM call with tools (NON-STREAMING for tool calls) with retry
-    let response;
-    try {
-      response = await retryWithBackoff(async () => {
+    // Make LLM call with tools (NON-STREAMING for tool calls)
+    const { response, modelUsed } = await tryModelsUntilSuccess(
+      client,
+      modelsToTry,
+      async (model) => {
         return await client.chat.completions.create({
-          model: modelToUse,
+          model,
           messages: openAIMessages,
           tools: [weatherTool],
           tool_choice: "auto",
           stream: false,
         });
-      });
-    } catch (error) {
-      // Try fallback models if primary fails
-      if (error.status === 429) {
-        console.log(`Model ${modelToUse} failed. Trying fallbacks...`);
-        for (const fallbackModel of FALLBACK_MODELS) {
-          if (fallbackModel === modelToUse) continue;
-          try {
-            console.log(`Trying ${fallbackModel}...`);
-            response = await client.chat.completions.create({
-              model: fallbackModel,
-              messages: openAIMessages,
-              tools: [weatherTool],
-              tool_choice: "auto",
-              stream: false,
-            });
-            console.log(`Success with ${fallbackModel}`);
-            break;
-          } catch (fallbackError) {
-            console.log(`${fallbackModel} also failed:`, fallbackError.message);
-            continue;
-          }
-        }
       }
-      
-      if (!response) {
-        throw new Error("All models are rate-limited. Please try again in a few minutes.");
-      }
-    }
+    );
 
     let assistantMessage = response.choices[0].message;
 
@@ -132,33 +162,41 @@ export async function POST(req) {
         });
       }
 
-      // Get next response from LLM with retry
-      response = await retryWithBackoff(async () => {
-        return await client.chat.completions.create({
-          model: modelToUse,
-          messages: openAIMessages,
-          tools: [weatherTool],
-          tool_choice: "auto",
-          stream: false,
-        });
-      });
+      // Get next response from LLM (use same successful model)
+      const { response: nextResponse } = await tryModelsUntilSuccess(
+        client,
+        [modelUsed, ...modelsToTry.filter(m => m !== modelUsed)],
+        async (model) => {
+          return await client.chat.completions.create({
+            model,
+            messages: openAIMessages,
+            tools: [weatherTool],
+            tool_choice: "auto",
+            stream: false,
+          });
+        }
+      );
       
-      assistantMessage = response.choices[0].message;
+      assistantMessage = nextResponse.choices[0].message;
     }
 
     // Update the stored messages
     threadMessages.push(userMessage);
     threadMessages.push(assistantMessage);
 
-    // NOW stream with proper Crayon format
-    const llmStream = await retryWithBackoff(async () => {
-      return await client.chat.completions.create({
-        model: modelToUse,
-        messages: openAIMessages,
-        stream: true,
-        response_format: templatesToResponseFormat(),
-      });
-    });
+    // NOW stream with proper Crayon format (use same successful model)
+    const { response: llmStream } = await tryModelsUntilSuccess(
+      client,
+      [modelUsed, ...modelsToTry.filter(m => m !== modelUsed)],
+      async (model) => {
+        return await client.chat.completions.create({
+          model,
+          messages: openAIMessages,
+          stream: true,
+          response_format: templatesToResponseFormat(),
+        });
+      }
+    );
 
     // Convert to Crayon stream format
     const responseStream = fromOpenAICompletion(llmStream);
@@ -173,13 +211,19 @@ export async function POST(req) {
   } catch (error) {
     console.error("Chat API Error:", error);
     
+    const availableCount = getAvailableModels().length;
+    const errorMessage = availableCount === 0
+      ? "All AI models are temporarily rate-limited. Please try again in a few minutes."
+      : error.message || "An error occurred processing your request";
+
     // Return error as JSON
     return NextResponse.json(
       { 
-        error: error.message || "An error occurred processing your request",
+        error: errorMessage,
         details: error.status === 429 
-          ? "The AI service is temporarily rate-limited. Please try again in a few moments."
-          : "Please check your API key and try again."
+          ? `${availableCount}/${ALL_FREE_MODELS.length} models still available. The system will automatically retry.`
+          : "Please check your API key and try again.",
+        availableModels: availableCount
       },
       { status: error.status || 500 }
     );
