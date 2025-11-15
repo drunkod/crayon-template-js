@@ -12,3 +12,90 @@ body {
     background: rgb(var(--background-rgb));
     font-family: var(--font-inter), system-ui, sans-serif;
 }
+
+/* Weather Card Styles */
+.weather-card {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    border-radius: 16px;
+    padding: 24px;
+    max-width: 400px;
+    margin: 16px 0;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+}
+
+.weather-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 20px;
+}
+
+.location {
+    font-size: 24px;
+    font-weight: 700;
+    margin: 0;
+}
+
+.country {
+    font-size: 14px;
+    opacity: 0.9;
+    margin: 4px 0 0 0;
+}
+
+.icon {
+    font-size: 48px;
+}
+
+.weather-main {
+    text-align: center;
+    margin: 24px 0;
+}
+
+.temperature {
+    font-size: 64px;
+    font-weight: 700;
+    line-height: 1;
+}
+
+.condition {
+    font-size: 20px;
+    opacity: 0.95;
+    margin-top: 8px;
+    text-transform: capitalize;
+}
+
+.weather-details {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    margin-top: 24px;
+    padding-top: 24px;
+    border-top: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.detail {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.detail .label {
+    font-size: 12px;
+    opacity: 0.8;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.detail .value {
+    font-size: 18px;
+    font-weight: 600;
+}
+
+.weather-footer {
+    margin-top: 16px;
+    padding-top: 16px;
+    border-top: 1px solid rgba(255, 255, 255, 0.2);
+    text-align: center;
+    opacity: 0.8;
+}
