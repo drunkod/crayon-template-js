@@ -5,7 +5,7 @@ export const weatherCardTemplate = {
   component: WeatherCard,
   match: (data) => {
     // Match JSON objects with weather data structure
-    if (typeof data === 'object' && data.location && data.temperature !== undefined) {
+    if (typeof data === 'object' && data && data.location && data.temperature !== undefined) {
       return true;
     }
     // Also try to parse strings that might be JSON
