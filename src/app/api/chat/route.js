@@ -7,6 +7,7 @@ import {
 } from "@crayonai/stream";
 import { weatherTool, executeWeatherTool } from "./tools";
 import { systemPrompt, systemPromptNoTools } from "./systemPrompt";
+import { extractLocation } from './locationUtils';
 
 // In-memory message store (per thread)
 const messageStore = new Map();
@@ -49,35 +50,88 @@ function markModelFailed(model) {
   console.log(`Marked ${model} as failed. Cooling down for 5 minutes.`);
 }
 
-// Extract location from user message
-function extractLocation(message) {
-  const text = message.toLowerCase();
+// Mock OpenRouter mode
+async function handleMockMode(userMessage, threadMessages) {
+  console.log('[MOCK MODE] Using mock OpenRouter');
 
-  // Common patterns
-  const patterns = [
-    /weather (?:in|for|at) ([a-z\s]+?)(?:\?|$|\.)/,
-    /(?:what's|what is|how's|how is) (?:the )?weather (?:in|at|for) ([a-z\s]+?)(?:\?|$|\.)/,
-    /(?:in|at|for) ([a-z\s]+?) weather/,
-    /^([a-z\s]+?) weather$/,
-    /weather: ([a-z\s]+)/,
-  ];
+  const location = extractLocation(userMessage.content);
 
-  for (const pattern of patterns) {
-    const match = text.match(pattern);
-    if (match) {
-      return match[1].trim();
+  if (!location) {
+    // No location found - ask for one
+    const response = "I'd be happy to help you with weather information! Which city would you like to know about?";
+
+    async function* generateStream() {
+      // Stream the entire text response at once to avoid JSON parsing confusion
+      yield {
+        choices: [{
+          delta: { content: response },
+          index: 0,
+          finish_reason: null
+        }]
+      };
+      await new Promise(resolve => setTimeout(resolve, 50));
+      yield {
+        choices: [{
+          delta: {},
+          index: 0,
+          finish_reason: 'stop'
+        }]
+      };
     }
+
+    return { stream: generateStream(), content: response };
   }
 
-  // Fallback: look for city names (common ones)
-  const cities = ['paris', 'london', 'tokyo', 'new york', 'sydney', 'berlin', 'moscow', 'beijing', 'mumbai', 'dubai'];
-  for (const city of cities) {
-    if (text.includes(city)) {
-      return city;
-    }
-  }
+  // Fetch weather and return as JSON
+  try {
+    const weatherData = await executeWeatherTool({ location });
 
-  return null;
+    async function* generateWeatherStream() {
+      // Stream the JSON all at once to ensure proper parsing
+      await new Promise(resolve => setTimeout(resolve, 300));
+      yield {
+        choices: [{
+          delta: { content: weatherData },
+          index: 0,
+          finish_reason: null
+        }]
+      };
+      await new Promise(resolve => setTimeout(resolve, 50));
+      yield {
+        choices: [{
+          delta: {},
+          index: 0,
+          finish_reason: 'stop'
+        }]
+      };
+    }
+
+    return { stream: generateWeatherStream(), content: weatherData };
+  } catch (error) {
+    console.error('Mock weather fetch failed:', error);
+    const errorMsg = `Sorry, I couldn't fetch the weather for ${location}. Please try another city.`;
+
+    async function* generateErrorStream() {
+      // Stream entire error message at once
+      yield {
+        choices: [{
+          delta: { content: errorMsg },
+          index: 0,
+          finish_reason: null
+        }]
+      };
+      await new Promise(resolve => setTimeout(resolve, 50));
+      yield {
+        choices: [{
+          delta: {},
+          index: 0,
+          finish_reason: 'stop'
+        }]
+      };
+    }
+
+    return { stream: generateErrorStream(), content: errorMsg };
+  }
 }
 
 // Try models with tools
@@ -162,15 +216,70 @@ async function tryWithoutTools(client, models, messages, userMessage) {
 
 export async function POST(req) {
   try {
-    const { messages, threadId } = await req.json();
+    const body = await req.json();
+    const { messages, threadId } = body;
 
-    // Initialize thread if needed
-    if (!messageStore.has(threadId)) {
-      messageStore.set(threadId, []);
+    // Validate input with better error messages
+    if (!messages || !Array.isArray(messages) || messages.length === 0) {
+      console.error('Invalid messages:', messages);
+      return NextResponse.json(
+        { error: "No messages provided" },
+        { status: 400 }
+      );
     }
 
     const userMessage = messages[messages.length - 1];
-    const threadMessages = messageStore.get(threadId);
+
+    // More flexible validation - check for content in different formats
+    const messageContent = userMessage?.content || userMessage?.text || userMessage?.message;
+
+    if (!messageContent) {
+      console.error('Invalid message format:', userMessage);
+      return NextResponse.json(
+        { error: "Invalid message format - no content found" },
+        { status: 400 }
+      );
+    }
+
+    // Normalize the message
+    const normalizedMessage = {
+      role: userMessage.role || 'user',
+      content: messageContent
+    };
+
+    // Initialize thread if needed
+    if (!threadId || !messageStore.has(threadId)) {
+      messageStore.set(threadId || 'default', []);
+    }
+
+    const threadMessages = messageStore.get(threadId || 'default');
+
+    // Check if we should use mock mode
+    const useMockMode = process.env.USE_MOCK_OPENROUTER === "true" ||
+                        !process.env.OPENROUTER_API_KEY ||
+                        process.env.OPENROUTER_API_KEY === "your_openrouter_api_key_here";
+
+    if (useMockMode) {
+      const mockResult = await handleMockMode(normalizedMessage, threadMessages);
+
+      // Update stored messages
+      threadMessages.push(normalizedMessage);
+      threadMessages.push({
+        role: "assistant",
+        content: mockResult.content
+      });
+
+      // Convert async generator to stream
+      const responseStream = fromOpenAICompletion(mockResult.stream);
+
+      return new NextResponse(responseStream, {
+        headers: {
+          "Content-Type": "text/event-stream",
+          "Cache-Control": "no-cache, no-transform",
+          Connection: "keep-alive",
+        },
+      });
+    }
     
     // Configure OpenAI client for OpenRouter
     const client = new OpenAI({
@@ -188,7 +297,7 @@ export async function POST(req) {
     let conversationMessages = [
       { role: "system", content: systemPromptNoTools },
       ...threadMessages,
-      userMessage
+      normalizedMessage
     ];
 
     let result = null;
@@ -202,7 +311,7 @@ export async function POST(req) {
     // If tools failed or no tool models available, try without tools
     if (!result) {
       conversationMessages[0].content = systemPromptNoTools;
-      result = await tryWithoutTools(client, NON_TOOL_MODELS, conversationMessages, userMessage);
+      result = await tryWithoutTools(client, NON_TOOL_MODELS, conversationMessages, normalizedMessage);
     }
 
     if (!result) {
@@ -241,7 +350,7 @@ export async function POST(req) {
     }
 
     // Update stored messages
-    threadMessages.push(userMessage);
+    threadMessages.push(normalizedMessage);
     threadMessages.push({
       role: "assistant",
       content: assistantMessage.content
