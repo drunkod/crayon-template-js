@@ -6,35 +6,159 @@ import {
   templatesToResponseFormat,
 } from "@crayonai/stream";
 import { weatherTool, executeWeatherTool } from "./tools";
-import { systemPrompt } from "./systemPrompt";
+import { systemPrompt, systemPromptNoTools } from "./systemPrompt";
 
 // In-memory message store (per thread)
 const messageStore = new Map();
 
-// Retry helper function
-async function retryWithBackoff(fn, maxRetries = 3, initialDelay = 1000) {
-  for (let i = 0; i < maxRetries; i++) {
-    try {
-      return await fn();
-    } catch (error) {
-      if (error.status === 429 && i < maxRetries - 1) {
-        const delay = initialDelay * Math.pow(2, i);
-        console.log(`Rate limited. Retrying in ${delay}ms... (attempt ${i + 1}/${maxRetries})`);
-        await new Promise(resolve => setTimeout(resolve, delay));
-      } else {
-        throw error;
-      }
+// Models that support tool calling (very few free ones do!)
+const TOOL_CAPABLE_MODELS = [
+  "google/gemini-2.0-flash-exp:free",
+  "google/gemini-flash-1.5-8b:free",
+];
+
+// All other free models - will use direct responses
+const NON_TOOL_MODELS = [
+  "deepseek/deepseek-chat-v3.1:free",
+  "meta-llama/llama-3.3-70b-instruct:free",
+  "qwen/qwen-2.5-72b-instruct:free",
+  "mistralai/mistral-small-3.2-24b-instruct:free",
+  "qwen/qwen-2.5-coder-32b-instruct:free",
+  "nousresearch/hermes-3-llama-3.1-405b:free",
+  "meta-llama/llama-3.2-3b-instruct:free",
+  "mistralai/mistral-nemo:free",
+  "mistralai/mistral-7b-instruct:free",
+];
+
+// Track failed models to avoid retrying them immediately
+const failedModels = new Map(); // model -> timestamp
+
+// Clean up failed models older than 5 minutes
+function cleanupFailedModels() {
+  const fiveMinutesAgo = Date.now() - 5 * 60 * 1000;
+  for (const [model, timestamp] of failedModels.entries()) {
+    if (timestamp < fiveMinutesAgo) {
+      failedModels.delete(model);
     }
   }
 }
 
-// Get available fallback models
-const FALLBACK_MODELS = [
-  "kwaipilot/kat-coder-pro:free",
-  "google/gemini-flash-1.5:free",
-  "meta-llama/llama-3.2-3b-instruct:free",
-  "microsoft/phi-3-mini-128k-instruct:free",
-];
+// Mark model as failed
+function markModelFailed(model) {
+  failedModels.set(model, Date.now());
+  console.log(`Marked ${model} as failed. Cooling down for 5 minutes.`);
+}
+
+// Extract location from user message
+function extractLocation(message) {
+  const text = message.toLowerCase();
+
+  // Common patterns
+  const patterns = [
+    /weather (?:in|for|at) ([a-z\s]+?)(?:\?|$|\.)/,
+    /(?:what's|what is|how's|how is) (?:the )?weather (?:in|at|for) ([a-z\s]+?)(?:\?|$|\.)/,
+    /(?:in|at|for) ([a-z\s]+?) weather/,
+    /^([a-z\s]+?) weather$/,
+    /weather: ([a-z\s]+)/,
+  ];
+
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    if (match) {
+      return match[1].trim();
+    }
+  }
+
+  // Fallback: look for city names (common ones)
+  const cities = ['paris', 'london', 'tokyo', 'new york', 'sydney', 'berlin', 'moscow', 'beijing', 'mumbai', 'dubai'];
+  for (const city of cities) {
+    if (text.includes(city)) {
+      return city;
+    }
+  }
+
+  return null;
+}
+
+// Try models with tools
+async function tryWithTools(client, models, messages) {
+  const availableModels = models.filter(m => !failedModels.has(m));
+
+  for (const model of availableModels) {
+    try {
+      console.log(`[TOOLS] Trying ${model}...`);
+
+      const response = await client.chat.completions.create({
+        model,
+        messages,
+        tools: [weatherTool],
+        tool_choice: "auto",
+        stream: false,
+        temperature: 0.7,
+      });
+
+      console.log(`✓ Success with ${model} (with tools)`);
+      return { response, modelUsed: model, usedTools: true };
+    } catch (error) {
+      console.log(`✗ ${model} failed: ${error.message}`);
+      if (error.status === 429 || error.message?.includes("rate")) {
+        markModelFailed(model);
+      }
+    }
+  }
+
+  return null;
+}
+
+// Try models without tools (direct weather data injection)
+async function tryWithoutTools(client, models, messages, userMessage) {
+  const availableModels = models.filter(m => !failedModels.has(m));
+
+  // Try to extract location and fetch weather
+  const location = extractLocation(userMessage.content);
+  let weatherData = null;
+
+  if (location) {
+    try {
+      weatherData = await executeWeatherTool({ location });
+      console.log(`Fetched weather for ${location}`);
+    } catch (error) {
+      console.log(`Failed to fetch weather: ${error.message}`);
+    }
+  }
+
+  // Modify messages to include weather data if available
+  const modifiedMessages = [...messages];
+  if (weatherData) {
+    modifiedMessages.push({
+      role: "system",
+      content: `Weather data for ${location}: ${weatherData}\n\nRespond ONLY with this exact JSON, no additional text.`
+    });
+  }
+
+  for (const model of availableModels) {
+    try {
+      console.log(`[NO-TOOLS] Trying ${model}...`);
+
+      const response = await client.chat.completions.create({
+        model,
+        messages: modifiedMessages,
+        stream: false,
+        temperature: 0.3,
+      });
+
+      console.log(`✓ Success with ${model} (without tools)`);
+      return { response, modelUsed: model, usedTools: false };
+    } catch (error) {
+      console.log(`✗ ${model} failed: ${error.message}`);
+      if (error.status === 429 || error.message?.includes("rate")) {
+        markModelFailed(model);
+      }
+    }
+  }
+
+  return null;
+}
 
 export async function POST(req) {
   try {
@@ -42,18 +166,12 @@ export async function POST(req) {
 
     // Initialize thread if needed
     if (!messageStore.has(threadId)) {
-      messageStore.set(threadId, [
-        { role: "system", content: systemPrompt }
-      ]);
+      messageStore.set(threadId, []);
     }
 
-    // Add user message to history
     const userMessage = messages[messages.length - 1];
     const threadMessages = messageStore.get(threadId);
     
-    // Convert to OpenAI format
-    const openAIMessages = toOpenAIMessages([...threadMessages, userMessage]);
-
     // Configure OpenAI client for OpenRouter
     const client = new OpenAI({
       apiKey: process.env.OPENROUTER_API_KEY,
@@ -64,103 +182,79 @@ export async function POST(req) {
       },
     });
 
-    const modelToUse = process.env.OPENROUTER_MODEL || FALLBACK_MODELS[0];
+    cleanupFailedModels();
 
-    // Make LLM call with tools (NON-STREAMING for tool calls) with retry
-    let response;
-    try {
-      response = await retryWithBackoff(async () => {
-        return await client.chat.completions.create({
-          model: modelToUse,
-          messages: openAIMessages,
-          tools: [weatherTool],
-          tool_choice: "auto",
-          stream: false,
-        });
-      });
-    } catch (error) {
-      // Try fallback models if primary fails
-      if (error.status === 429) {
-        console.log(`Model ${modelToUse} failed. Trying fallbacks...`);
-        for (const fallbackModel of FALLBACK_MODELS) {
-          if (fallbackModel === modelToUse) continue;
-          try {
-            console.log(`Trying ${fallbackModel}...`);
-            response = await client.chat.completions.create({
-              model: fallbackModel,
-              messages: openAIMessages,
-              tools: [weatherTool],
-              tool_choice: "auto",
-              stream: false,
-            });
-            console.log(`Success with ${fallbackModel}`);
-            break;
-          } catch (fallbackError) {
-            console.log(`${fallbackModel} also failed:`, fallbackError.message);
-            continue;
-          }
-        }
-      }
-      
-      if (!response) {
-        throw new Error("All models are rate-limited. Please try again in a few minutes.");
-      }
+    // Build conversation messages
+    let conversationMessages = [
+      { role: "system", content: systemPromptNoTools },
+      ...threadMessages,
+      userMessage
+    ];
+
+    let result = null;
+
+    // First, try tool-capable models (if any are available)
+    if (TOOL_CAPABLE_MODELS.some(m => !failedModels.has(m))) {
+      conversationMessages[0].content = systemPrompt; // Use tool-aware prompt
+      result = await tryWithTools(client, TOOL_CAPABLE_MODELS, conversationMessages);
     }
 
+    // If tools failed or no tool models available, try without tools
+    if (!result) {
+      conversationMessages[0].content = systemPromptNoTools;
+      result = await tryWithoutTools(client, NON_TOOL_MODELS, conversationMessages, userMessage);
+    }
+
+    if (!result) {
+      throw new Error("All models are currently unavailable. Please try again in a few minutes.");
+    }
+
+    let { response, modelUsed, usedTools } = result;
     let assistantMessage = response.choices[0].message;
 
-    // Handle tool calls
-    while (assistantMessage.tool_calls && assistantMessage.tool_calls.length > 0) {
-      // Add assistant message with tool calls to history
-      openAIMessages.push(assistantMessage);
+    // Handle tool calls if present
+    if (usedTools && assistantMessage.tool_calls?.length > 0) {
+      const toolMessages = [...conversationMessages];
 
-      // Execute each tool call
-      for (const toolCall of assistantMessage.tool_calls) {
-        const functionName = toolCall.function.name;
-        const functionArgs = JSON.parse(toolCall.function.arguments);
-        let functionResponse;
+      while (assistantMessage.tool_calls?.length > 0) {
+        toolMessages.push(assistantMessage);
 
-        if (functionName === "get_weather") {
-          functionResponse = await executeWeatherTool(functionArgs);
+        for (const toolCall of assistantMessage.tool_calls) {
+          const functionArgs = JSON.parse(toolCall.function.arguments);
+          const functionResponse = await executeWeatherTool(functionArgs);
+
+          toolMessages.push({
+            role: "tool",
+            tool_call_id: toolCall.id,
+            content: functionResponse,
+          });
         }
 
-        // Add tool response to messages
-        openAIMessages.push({
-          role: "tool",
-          tool_call_id: toolCall.id,
-          content: functionResponse,
-        });
-      }
-
-      // Get next response from LLM with retry
-      response = await retryWithBackoff(async () => {
-        return await client.chat.completions.create({
-          model: modelToUse,
-          messages: openAIMessages,
-          tools: [weatherTool],
-          tool_choice: "auto",
+        const nextResponse = await client.chat.completions.create({
+          model: modelUsed,
+          messages: toolMessages,
           stream: false,
         });
-      });
-      
-      assistantMessage = response.choices[0].message;
+
+        assistantMessage = nextResponse.choices[0].message;
+      }
     }
 
-    // Update the stored messages
+    // Update stored messages
     threadMessages.push(userMessage);
-    threadMessages.push(assistantMessage);
-
-    // NOW stream with proper Crayon format
-    const llmStream = await retryWithBackoff(async () => {
-      return await client.chat.completions.create({
-        model: modelToUse,
-        messages: openAIMessages,
-        stream: true,
-        response_format: templatesToResponseFormat(),
-      });
+    threadMessages.push({
+      role: "assistant",
+      content: assistantMessage.content
     });
 
-    // Convert to Crayon stream format
+    // Stream the final response
+    const llmStream = await client.chat.completions.create({
+      model: modelUsed,
+      messages: [...conversationMessages, assistantMessage],
+      stream: true,
+      response_format: templatesToResponseFormat(),
+    });
+
     const responseStream = fromOpenAICompletion(llmStream);
 
     return new NextResponse(responseStream, {
@@ -173,13 +267,10 @@ export async function POST(req) {
   } catch (error) {
     console.error("Chat API Error:", error);
     
-    // Return error as JSON
     return NextResponse.json(
       { 
         error: error.message || "An error occurred processing your request",
-        details: error.status === 429 
-          ? "The AI service is temporarily rate-limited. Please try again in a few moments."
-          : "Please check your API key and try again."
+        details: "All available models are currently rate-limited or unavailable. Please try again in a few moments."
       },
       { status: error.status || 500 }
     );
