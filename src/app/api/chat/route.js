@@ -51,8 +51,11 @@ function markModelFailed(model) {
 
 // Extract location from user message
 function extractLocation(message) {
+  // Add validation for undefined/null/non-string input
+  if (!message || typeof message !== 'string') {
+    return null;
+  }
   const text = message.toLowerCase();
-
   // Common patterns
   const patterns = [
     /weather (?:in|for|at) ([a-z\s]+?)(?:\?|$|\.)/,
@@ -61,14 +64,12 @@ function extractLocation(message) {
     /^([a-z\s]+?) weather$/,
     /weather: ([a-z\s]+)/,
   ];
-
   for (const pattern of patterns) {
     const match = text.match(pattern);
     if (match) {
       return match[1].trim();
     }
   }
-
   // Fallback: look for city names (common ones)
   const cities = ['paris', 'london', 'tokyo', 'new york', 'sydney', 'berlin', 'moscow', 'beijing', 'mumbai', 'dubai'];
   for (const city of cities) {
@@ -76,7 +77,6 @@ function extractLocation(message) {
       return city;
     }
   }
-
   return null;
 }
 
@@ -163,13 +163,25 @@ async function tryWithoutTools(client, models, messages, userMessage) {
 export async function POST(req) {
   try {
     const { messages, threadId } = await req.json();
+    // Validate input
+    if (!messages || !Array.isArray(messages) || messages.length === 0) {
+      return NextResponse.json(
+        { error: "No messages provided" },
+        { status: 400 }
+      );
+    }
+    const userMessage = messages[messages.length - 1];
+    if (!userMessage || !userMessage.content) {
+      return NextResponse.json(
+        { error: "Invalid message format" },
+        { status: 400 }
+      );
+    }
 
     // Initialize thread if needed
     if (!messageStore.has(threadId)) {
       messageStore.set(threadId, []);
     }
-
-    const userMessage = messages[messages.length - 1];
     const threadMessages = messageStore.get(threadId);
     
     // Configure OpenAI client for OpenRouter
