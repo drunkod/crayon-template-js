@@ -1,5 +1,6 @@
-export function WeatherCard({ data }) {
-  const weather = typeof data === 'string' ? JSON.parse(data) : data;
+// Component now receives props directly (not wrapped in data)
+export function WeatherCard(props) {
+  const weather = props;
 
   return (
     <div className="weather-card">
