@@ -46,13 +46,13 @@ describe('Weather Card Template', () => {
   describe('props function', () => {
     it('returns correct props for object data', () => {
       const props = weatherCardTemplate.props(mockWeatherData)
-      expect(props).toEqual({ data: mockWeatherData })
+      expect(props).toEqual(mockWeatherData)
     })
 
     it('parses JSON string data', () => {
       const jsonString = JSON.stringify(mockWeatherData)
       const props = weatherCardTemplate.props(jsonString)
-      expect(props.data).toEqual(mockWeatherData)
+      expect(props).toEqual(mockWeatherData)
     })
   })
 

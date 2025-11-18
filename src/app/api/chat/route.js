@@ -79,14 +79,18 @@ export async function POST(req) {
     const last = messages[messages.length - 1];
     let preview = '';
 
-    if (typeof last?.content === 'string') {
-      preview = last.content.slice(0, 50);
-    } else if (Array.isArray(last?.content)) {
-      preview = JSON.stringify(last.content).slice(0, 80);
-    } else if (typeof last?.text === 'string') {
-      preview = last.text.slice(0, 50);
+    if (last) {
+      if (typeof last.content === 'string') {
+        preview = last.content.slice(0, 50);
+      } else if (Array.isArray(last.content)) {
+        preview = JSON.stringify(last.content).slice(0, 80);
+      } else if (typeof last.text === 'string') {
+        preview = last.text.slice(0, 50);
+      } else {
+        preview = JSON.stringify(last).slice(0, 80);
+      }
     } else {
-      preview = JSON.stringify(last).slice(0, 80);
+      preview = '[No messages]';
     }
 
     apiDebug.log(`Messages received`, { 

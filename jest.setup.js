@@ -1,9 +1,10 @@
 // Learn more: https://github.com/testing-library/jest-dom
 import '@testing-library/jest-dom'
 
-// Mock environment variables
-process.env.USE_MOCK_WEATHER = 'true'
-process.env.USE_MOCK_OPENROUTER = 'true'
+// Match what the app uses now
+process.env.NEXT_PUBLIC_USE_MOCK_WEATHER = 'true'
+process.env.NEXT_PUBLIC_USE_MOCK_OPENROUTER = 'true'
+process.env.NEXT_PUBLIC_DEBUG_MODE = 'false' // keep logs off in tests
 process.env.OPENROUTER_API_KEY = 'test-key'
 process.env.OPENROUTER_API_BASE = 'https://openrouter.ai/api/v1'
 process.env.OPENROUTER_SITE_URL = 'http://localhost:4000'

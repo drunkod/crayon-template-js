@@ -21,7 +21,7 @@ export const weatherCardTemplate = {
   },
   props: (data) => {
     const parsedData = typeof data === 'string' ? JSON.parse(data) : data;
-    return { data: parsedData };
+    return parsedData;
   },
 };
 

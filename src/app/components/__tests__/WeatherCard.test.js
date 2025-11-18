@@ -18,7 +18,7 @@ describe('WeatherCard', () => {
   }
 
   it('renders weather information correctly', () => {
-    render(<WeatherCard data={mockWeatherData} />)
+    render(<WeatherCard {...mockWeatherData} />)
 
     expect(screen.getByText('Paris')).toBeInTheDocument()
     expect(screen.getByText('France')).toBeInTheDocument()
@@ -28,7 +28,7 @@ describe('WeatherCard', () => {
   })
 
   it('renders weather details correctly', () => {
-    render(<WeatherCard data={mockWeatherData} />)
+    render(<WeatherCard {...mockWeatherData} />)
 
     expect(screen.getByText('13°C')).toBeInTheDocument() // Feels like
     expect(screen.getByText('15° / 12°')).toBeInTheDocument() // High/Low
@@ -36,17 +36,9 @@ describe('WeatherCard', () => {
     expect(screen.getByText('6 km/h')).toBeInTheDocument() // Wind speed
   })
 
-  it('handles JSON string data', () => {
-    const jsonString = JSON.stringify(mockWeatherData)
-    render(<WeatherCard data={jsonString} />)
-
-    expect(screen.getByText('Paris')).toBeInTheDocument()
-    expect(screen.getByText('14°C')).toBeInTheDocument()
-  })
-
   it('renders without country if not provided', () => {
     const dataWithoutCountry = { ...mockWeatherData, country: '' }
-    render(<WeatherCard data={dataWithoutCountry} />)
+    render(<WeatherCard {...dataWithoutCountry} />)
 
     expect(screen.getByText('Paris')).toBeInTheDocument()
     expect(screen.queryByText('France')).not.toBeInTheDocument()
