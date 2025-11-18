@@ -60,7 +60,7 @@ export async function handleRealRequest(messages) {
   return handleOpenRouterRequest(messages);
 }
 
-// Handle REAL OpenRouter streaming mode
+// Handle REAL OpenRouter streaming mode with model fallback
 async function handleOpenRouterRequest(messages) {
   aiDebug.log("🌐 Using REAL OpenRouter API");
   const client = createOpenRouterClient();
@@ -109,7 +109,7 @@ async function handleOpenRouterRequest(messages) {
   );
 }
 
-// Handle REAL Gemini (Google AI Studio) streaming mode
+// Handle REAL Gemini (Google AI Studio) streaming mode with retry logic
 async function handleGeminiRequest(messages) {
   aiDebug.log(
     "🌐 Using REAL Gemini API (Google AI Studio, OpenAI compatible endpoint)",
@@ -120,30 +120,82 @@ async function handleGeminiRequest(messages) {
     ...messages,
   ];
 
-  try {
-    const completion = await client.chat.completions.create({
-      model: GEMINI_MODEL,
-      messages: messagesWithSystem,
-      stream: true,
-      temperature: 0.7,
-      max_tokens: 500,
-    });
-    aiDebug.success(
-      `Gemini model worked: ${GEMINI_MODEL}, streaming response`,
-    );
-    const responseStream = fromOpenAICompletion(completion);
-    return sseResponse(responseStream);
-  } catch (error) {
-    aiDebug.error("Gemini model failed", {
-      status: error.status,
-      message: error.message?.substring(0, 200),
-    });
-    return NextResponse.json(
-      {
-        error: "Gemini request failed",
-        message: error.message,
-      },
-      { status: error.status || 500 },
-    );
+  const maxRetries = 3;
+  let lastError = null;
+
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      aiDebug.log(`Gemini attempt ${attempt}/${maxRetries}`);
+      
+      const completion = await client.chat.completions.create({
+        model: GEMINI_MODEL,
+        messages: messagesWithSystem,
+        stream: true,
+        temperature: 0.7,
+        max_tokens: 500,
+      });
+      
+      aiDebug.success(
+        `Gemini model worked on attempt ${attempt}: ${GEMINI_MODEL}, streaming response`,
+      );
+      const responseStream = fromOpenAICompletion(completion);
+      return sseResponse(responseStream);
+      
+    } catch (error) {
+      lastError = error;
+      
+      // If rate limited (429) and we have retries left, wait and retry
+      if (error.status === 429 && attempt < maxRetries) {
+        // Exponential backoff: 2s, 4s, 8s
+        const waitTime = Math.pow(2, attempt) * 1000;
+        aiDebug.warn(
+          `Gemini rate limited (429), retrying in ${waitTime / 1000}s... (attempt ${attempt}/${maxRetries})`,
+        );
+        await new Promise((resolve) => setTimeout(resolve, waitTime));
+        continue;
+      }
+      
+      // Log the error
+      aiDebug.error(`Gemini attempt ${attempt} failed`, {
+        status: error.status,
+        message: error.message?.substring(0, 200),
+      });
+      
+      // If this was the last attempt, break
+      if (attempt === maxRetries) {
+        break;
+      }
+      
+      // For non-429 errors, wait a bit before retrying
+      if (error.status !== 429 && attempt < maxRetries) {
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+      }
+    }
   }
+
+  // All retries failed - return appropriate error
+  const is429 = lastError?.status === 429;
+  
+  aiDebug.error(
+    `Gemini failed after ${maxRetries} attempts`,
+    {
+      finalStatus: lastError?.status,
+      finalMessage: lastError?.message,
+    },
+  );
+
+  return NextResponse.json(
+    {
+      error: is429 ? "Gemini rate limit exceeded" : "Gemini request failed",
+      message: is429
+        ? "You've hit Google's rate limit. Please wait a few minutes or switch to OpenRouter."
+        : lastError?.message || "Unknown error",
+      suggestion: is429
+        ? "Set AI_PROVIDER=openrouter in your .env file for more reliable service"
+        : "Check your GEMINI_API_KEY and network connection",
+      attempts: maxRetries,
+      finalStatus: lastError?.status,
+    },
+    { status: lastError?.status || 500 },
+  );
 }
