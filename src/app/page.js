@@ -1,36 +1,59 @@
 'use client';
-import { CrayonChat } from "@crayonai/react-ui";
-import "@crayonai/react-ui/styles/index.css";
+import dynamic from 'next/dynamic';
 import { WeatherCard } from './components/WeatherCard';
-import { TextTemplate } from './components/TextTemplate';
+import { DebugPanel } from './components/DebugPanel';
+import { apiDebug } from '@/lib/debug';
+import { EnvStatus } from './components/EnvStatus';
+
+// 🔧 Load CrayonChat only on the client; do not SSR it
+const CrayonChat = dynamic(
+  () => import('@crayonai/react-ui').then(mod => mod.CrayonChat),
+  { ssr: false }
+);
 
 const processMessage = async ({ threadId, messages, abortController }) => {
-  const response = await fetch("/api/chat", {
-    method: "POST",
-    body: JSON.stringify({ threadId, messages }),
-    headers: {
-      "Content-Type": "application/json",
-      Accept: "text/event-stream",
-    },
-    signal: abortController.signal,
+  apiDebug.log('📤 Sending message to API', { 
+    threadId, 
+    messageCount: messages.length 
   });
-  return response;
+
+  try {
+    const response = await fetch("/api/chat", {
+      method: "POST",
+      body: JSON.stringify({ threadId, messages }),
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "text/event-stream",
+      },
+      signal: abortController.signal,
+    });
+    
+    apiDebug.success('📥 Response received', { 
+      status: response.status,
+      contentType: response.headers.get('content-type')
+    });
+    
+    return response;
+  } catch (error) {
+    apiDebug.error('Request failed', error);
+    throw error;
+  }
 };
 
 export default function Home() {
   return (
-    <CrayonChat
-      processMessage={processMessage}
-      responseTemplates={[
-        {
-          name: "weather",
-          Component: WeatherCard,
-        },
-        {
-          name: "text",
-          Component: TextTemplate,
-        },
-      ]}
-    />
+    <>
+      <EnvStatus />
+      <CrayonChat
+        processMessage={processMessage}
+        responseTemplates={[
+          {
+            name: "weather",
+            Component: WeatherCard,
+          },
+        ]}
+      />
+      <DebugPanel />
+    </>
   );
 }

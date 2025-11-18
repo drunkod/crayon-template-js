@@ -78,11 +78,12 @@ function getWeatherIcon(code) {
 // Main weather function
 export async function getWeather(location) {
   try {
-    // Use mock data if enabled
-    if (process.env.USE_MOCK_WEATHER === "true") {
+    // 🔧 Fix env var name to match .env
+    if (process.env.NEXT_PUBLIC_USE_MOCK_WEATHER === "true") {
       console.log(`[MOCK MODE] Fetching weather for ${location}`);
       return await getMockWeather(location);
     }
+
 
     // Get coordinates
     const { latitude, longitude, name, country } = await getCoordinates(
