@@ -5,6 +5,10 @@ import {
   FREE_MODELS,
   SYSTEM_PROMPT,
   createOpenRouterClient,
+  createGeminiClient,
+  GEMINI_MODEL,
+  getAiProvider,
+  PROVIDERS,
 } from "./config";
 import { mockSseResponse, sseResponse } from "./sse";
 import { aiDebug } from "@/lib/debug";
@@ -39,8 +43,25 @@ export async function handleMockRequest(messages) {
   return mockSseResponse(aiResponse, false);
 }
 
-// Handle REAL OpenRouter streaming mode
+// ---------------------------------------------------------------------------
+// REAL providers
+// ---------------------------------------------------------------------------
+
+/**
+ * Entry point used by the route. Dispatches to the configured real provider.
+ */
 export async function handleRealRequest(messages) {
+  const provider = getAiProvider();
+  aiDebug.log(`🤖 Using AI Provider: ${provider}`);
+  if (provider === PROVIDERS.GEMINI) {
+    return handleGeminiRequest(messages);
+  }
+  // default: OpenRouter
+  return handleOpenRouterRequest(messages);
+}
+
+// Handle REAL OpenRouter streaming mode
+async function handleOpenRouterRequest(messages) {
   aiDebug.log("🌐 Using REAL OpenRouter API");
   const client = createOpenRouterClient();
   const messagesWithSystem = [
@@ -51,7 +72,9 @@ export async function handleRealRequest(messages) {
   let lastError = null;
   for (let i = 0; i < FREE_MODELS.length; i++) {
     const model = FREE_MODELS[i];
-    aiDebug.log(`Trying model [${i + 1}/${FREE_MODELS.length}]: ${model}`);
+    aiDebug.log(
+      `Trying OpenRouter model [${i + 1}/${FREE_MODELS.length}]: ${model}`,
+    );
     try {
       const completion = await client.chat.completions.create({
         model,
@@ -60,30 +83,67 @@ export async function handleRealRequest(messages) {
         temperature: 0.7,
         max_tokens: 500,
       });
-
-      aiDebug.success(`Model worked: ${model}, streaming response`);
+      aiDebug.success(
+        `OpenRouter model worked: ${model}, streaming response`,
+      );
       const responseStream = fromOpenAICompletion(completion);
       return sseResponse(responseStream);
     } catch (error) {
-      aiDebug.warn(`Model failed: ${model}`, {
+      aiDebug.warn(`OpenRouter model failed: ${model}`, {
         status: error.status,
         message: error.message?.substring(0, 80),
       });
       lastError = error;
-
-      // For these statuses, we just try the next free model
-      // For other errors, also continue to the next model
       continue;
     }
   }
 
-  aiDebug.error(`All ${FREE_MODELS.length} models failed`, lastError);
+  aiDebug.error(`All ${FREE_MODELS.length} OpenRouter models failed`, lastError);
   return NextResponse.json(
     {
-      error: `All ${FREE_MODELS.length} free models failed`,
+      error: `All ${FREE_MODELS.length} OpenRouter models failed`,
       message: "Please try again in a few moments",
       attemptedModels: FREE_MODELS.length,
     },
     { status: 503 },
   );
+}
+
+// Handle REAL Gemini (Google AI Studio) streaming mode
+async function handleGeminiRequest(messages) {
+  aiDebug.log(
+    "🌐 Using REAL Gemini API (Google AI Studio, OpenAI compatible endpoint)",
+  );
+  const client = createGeminiClient();
+  const messagesWithSystem = [
+    { role: "system", content: SYSTEM_PROMPT },
+    ...messages,
+  ];
+
+  try {
+    const completion = await client.chat.completions.create({
+      model: GEMINI_MODEL,
+      messages: messagesWithSystem,
+      stream: true,
+      temperature: 0.7,
+      max_tokens: 500,
+    });
+    aiDebug.success(
+      `Gemini model worked: ${GEMINI_MODEL}, streaming response`,
+    );
+    const responseStream = fromOpenAICompletion(completion);
+    return sseResponse(responseStream);
+  } catch (error) {
+    aiDebug.error("Gemini model failed", {
+      status: error.status,
+      message: error.message?.substring(0, 200),
+    });
+    return NextResponse.json(
+      {
+        error: "Gemini request failed",
+        message: error.message,
+      },
+      { status: error.status || 500 },
+    );
+  }
 }

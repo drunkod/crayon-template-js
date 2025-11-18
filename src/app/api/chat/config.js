@@ -1,14 +1,16 @@
 import OpenAI from "openai";
-export const FREE_MODELS = [
-"deepseek/deepseek-r1:free",
-"google/gemini-2.0-flash-exp:free",
-"qwen/qwen-2.5-72b-instruct:free",
-"meta-llama/llama-3.3-70b-instruct:free",
-"mistralai/mistral-small-3.2-24b-instruct:free",
-];
-export const SYSTEM_PROMPT = `You are a helpful AI assistant.
+import { aiDebug } from "@/lib/debug";
 
-When users ask about weather, respond with structured JSON in this exact format:
+// List of free OpenRouter models we'll rotate through
+export const FREE_MODELS = [
+  "deepseek/deepseek-r1:free",
+  "google/gemini-2.0-flash-exp:free",
+  "qwen/qwen-2.5-72b-instruct:free",
+  "meta-llama/llama-3.3-70b-instruct:free",
+  "mistralai/mistral-small-3.2-24b-instruct:free",
+];
+
+export const SYSTEM_PROMPT = `You are a helpful AI assistant. When users ask about weather, respond with structured JSON in this exact format:
 {
   "response": [
     {
@@ -35,21 +37,75 @@ For other questions, respond with plain text.
 
 Weather icons: ☀️ (sunny), ⛅ (partly cloudy), ☁️ (cloudy), 🌧️ (rainy), ⛈️ (stormy), 🌨️ (snowy), 🌫️ (foggy)
 `;
+
 export const STREAM_HEADERS = {
-"Content-Type": "text/event-stream",
-"Cache-Control": "no-cache, no-transform",
-Connection: "keep-alive",
+  "Content-Type": "text/event-stream",
+  "Cache-Control": "no-cache, no-transform",
+  Connection: "keep-alive",
 };
-export function isMockOpenRouter() {
-return process.env.NEXT_PUBLIC_USE_MOCK_OPENROUTER === "true";
+
+// --- Provider selection -----------------------------------------------------
+
+export const PROVIDERS = {
+  OPENROUTER: "openrouter",
+  GEMINI: "gemini",
+};
+
+/**
+ * Return which real AI provider to use when not in mock mode.
+ * Controlled via AI_PROVIDER / NEXT_PUBLIC_AI_PROVIDER env vars.
+ */
+export function getAiProvider() {
+  const env =
+    process.env.AI_PROVIDER || process.env.NEXT_PUBLIC_AI_PROVIDER || "";
+  const value = env.toLowerCase().trim();
+
+  if (value === PROVIDERS.GEMINI) {
+    return PROVIDERS.GEMINI;
+  }
+
+  if (value && value !== PROVIDERS.OPENROUTER) {
+    aiDebug.warn(
+      `Invalid AI_PROVIDER "${env}". Falling back to default "${PROVIDERS.OPENROUTER}".`,
+    );
+  }
+
+  // default / fallback
+  return PROVIDERS.OPENROUTER;
 }
+
+// --- Mock toggles ----------------------------------------------------------
+export function isMockAI() {
+  return process.env.NEXT_PUBLIC_USE_MOCK_OPENROUTER === "true";
+}
+
+// --- OpenRouter client -----------------------------------------------------
 export function createOpenRouterClient() {
-return new OpenAI({
-apiKey: process.env.OPENROUTER_API_KEY,
-baseURL: process.env.OPENROUTER_API_BASE || "https://openrouter.ai/api/v1",
-defaultHeaders: {
-"HTTP-Referer": process.env.OPENROUTER_SITE_URL,
-"X-Title": "Weather Chat App",
-},
-});
+  return new OpenAI({
+    apiKey: process.env.OPENROUTER_API_KEY,
+    baseURL: process.env.OPENROUTER_API_BASE || "https://openrouter.ai/api/v1",
+    defaultHeaders: {
+      "HTTP-Referer": process.env.OPENROUTER_SITE_URL,
+      "X-Title": "Weather Chat App",
+    },
+  });
+}
+
+// --- Gemini (Google AI Studio) client --------------------------------------
+export const GEMINI_MODEL = process.env.GEMINI_MODEL || "gpt-4.1-mini";
+
+/**
+ * Gemini via Google AI Studio, using the OpenAI-compatible endpoint so we
+ * can reuse the same OpenAI client + @crayonai/stream helpers.
+ *
+ * Docs: https://ai.google.dev/gemini-api/docs/openai
+ */
+export function createGeminiClient() {
+  return new OpenAI({
+    apiKey: process.env.GEMINI_API_KEY,
+    // OpenAI-compatible Gemini endpoint
+    baseURL:
+      process.env.GEMINI_API_BASE ||
+      "https://generativelanguage.googleapis.com/v1beta/openai",
+  });
 }

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { apiDebug } from "@/lib/debug";
-import { isMockOpenRouter } from "./config";
+import { isMockAI } from "./config";
 import { handleMockRequest, handleRealRequest } from "./handlers";
 
 import { getWeather } from "./tools";
@@ -57,7 +57,7 @@ export async function POST(req) {
     }
 
     // 🔹 5) Otherwise, fall back to AI (mock or real)
-    if (isMockOpenRouter()) {
+    if (isMockAI()) {
       return await handleMockRequest(messages);
     }
 

@@ -6,7 +6,8 @@ export function EnvStatus() {
   }
 
   const useMockWeather = process.env.NEXT_PUBLIC_USE_MOCK_WEATHER === 'true';
-  const useMockOpenRouter = process.env.NEXT_PUBLIC_USE_MOCK_OPENROUTER === 'true';
+  const useMockAI = process.env.NEXT_PUBLIC_USE_MOCK_OPENROUTER === 'true';
+  const aiProvider = process.env.NEXT_PUBLIC_AI_PROVIDER || 'openrouter';
 
   return (
     <div
@@ -30,8 +31,8 @@ export function EnvStatus() {
         </span>
       </div>
       <div>
-        AI: <span style={{ color: useMockOpenRouter ? '#fbbf24' : '#10b981' }}>
-          {useMockOpenRouter ? '🎭 MOCK' : '🌐 REAL'}
+        AI: <span style={{ color: useMockAI ? '#fbbf24' : '#10b981' }}>
+          {useMockAI ? '🎭 MOCK' : `🌐 REAL (${aiProvider})`}
         </span>
       </div>
     </div>
