@@ -5,13 +5,13 @@ import {
   FREE_MODELS,
   SYSTEM_PROMPT,
   createOpenRouterClient,
-  createGeminiClient,
-  GEMINI_MODEL,
   getAiProvider,
   PROVIDERS,
+  GEMINI_MODEL,
 } from "./config";
 import { mockSseResponse, sseResponse } from "./sse";
 import { aiDebug } from "@/lib/debug";
+import { callGeminiNative, geminiStreamToSSE } from "./geminiNative";
 
 // Handle MOCK mode (offline, using mockOpenRouter)
 export async function handleMockRequest(messages) {
@@ -109,80 +109,70 @@ async function handleOpenRouterRequest(messages) {
   );
 }
 
-// Handle REAL Gemini (Google AI Studio) streaming mode with retry logic
+// Handle REAL Gemini (Native API) streaming mode with retry logic
 async function handleGeminiRequest(messages) {
-  aiDebug.log(
-    "🌐 Using REAL Gemini API (Google AI Studio, OpenAI compatible endpoint)",
-  );
-  const client = createGeminiClient();
-  const messagesWithSystem = [
-    { role: "system", content: SYSTEM_PROMPT },
-    ...messages,
-  ];
-
+  aiDebug.log("🌐 Using REAL Gemini Native API");
   const maxRetries = 3;
   let lastError = null;
 
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
       aiDebug.log(`Gemini attempt ${attempt}/${maxRetries}`);
-      
-      const completion = await client.chat.completions.create({
-        model: GEMINI_MODEL,
-        messages: messagesWithSystem,
-        stream: true,
-        temperature: 0.7,
-        max_tokens: 500,
-      });
-      
+
+      // Call native Gemini API
+      const geminiResponse = await callGeminiNative(messages);
       aiDebug.success(
-        `Gemini model worked on attempt ${attempt}: ${GEMINI_MODEL}, streaming response`,
+        `Gemini model worked on attempt ${attempt}: ${GEMINI_MODEL}`,
       );
-      const responseStream = fromOpenAICompletion(completion);
+
+      // Convert Gemini stream to SSE format
+      const responseStream = geminiStreamToSSE(geminiResponse);
       return sseResponse(responseStream);
-      
     } catch (error) {
       lastError = error;
-      
-      // If rate limited (429) and we have retries left, wait and retry
-      if (error.status === 429 && attempt < maxRetries) {
+
+      // Check if it's a rate limit error (429)
+      const is429 =
+        error.message?.includes("429") ||
+        error.message?.toLowerCase().includes("rate limit");
+
+      if (is429 && attempt < maxRetries) {
         // Exponential backoff: 2s, 4s, 8s
         const waitTime = Math.pow(2, attempt) * 1000;
         aiDebug.warn(
-          `Gemini rate limited (429), retrying in ${waitTime / 1000}s... (attempt ${attempt}/${maxRetries})`,
+          `Gemini rate limited (429), retrying in ${
+            waitTime / 1000
+          }s... (attempt ${attempt}/${maxRetries})`,
         );
         await new Promise((resolve) => setTimeout(resolve, waitTime));
         continue;
       }
-      
+
       // Log the error
       aiDebug.error(`Gemini attempt ${attempt} failed`, {
-        status: error.status,
         message: error.message?.substring(0, 200),
       });
-      
+
       // If this was the last attempt, break
       if (attempt === maxRetries) {
         break;
       }
-      
+
       // For non-429 errors, wait a bit before retrying
-      if (error.status !== 429 && attempt < maxRetries) {
+      if (!is429 && attempt < maxRetries) {
         await new Promise((resolve) => setTimeout(resolve, 1000));
       }
     }
   }
 
-  // All retries failed - return appropriate error
-  const is429 = lastError?.status === 429;
-  
-  aiDebug.error(
-    `Gemini failed after ${maxRetries} attempts`,
-    {
-      finalStatus: lastError?.status,
-      finalMessage: lastError?.message,
-    },
-  );
+  // All retries failed
+  const is429 =
+    lastError?.message?.includes("429") ||
+    lastError?.message?.toLowerCase().includes("rate limit");
+
+  aiDebug.error(`Gemini failed after ${maxRetries} attempts`, {
+    finalMessage: lastError?.message,
+  });
 
   return NextResponse.json(
     {
@@ -194,8 +184,7 @@ async function handleGeminiRequest(messages) {
         ? "Set AI_PROVIDER=openrouter in your .env file for more reliable service"
         : "Check your GEMINI_API_KEY and network connection",
       attempts: maxRetries,
-      finalStatus: lastError?.status,
     },
-    { status: lastError?.status || 500 },
+    { status: is429 ? 429 : 500 },
   );
 }

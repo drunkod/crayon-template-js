@@ -91,21 +91,17 @@ export function createOpenRouterClient() {
   });
 }
 
-// --- Gemini (Google AI Studio) client --------------------------------------
-export const GEMINI_MODEL = process.env.GEMINI_MODEL || "gpt-4.1-mini";
+// --- Gemini Native API config -----------------------------------------------
+export const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+export const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.0-flash-exp";
+export const GEMINI_API_BASE =
+  process.env.GEMINI_API_BASE ||
+  "https://generativelanguage.googleapis.com/v1beta";
 
 /**
- * Gemini via Google AI Studio, using the OpenAI-compatible endpoint so we
- * can reuse the same OpenAI client + @crayonai/stream helpers.
- *
- * Docs: https://ai.google.dev/gemini-api/docs/openai
+ * Native Gemini API endpoint (not OpenAI-compatible)
  */
-export function createGeminiClient() {
-  return new OpenAI({
-    apiKey: process.env.GEMINI_API_KEY,
-    // OpenAI-compatible Gemini endpoint
-    baseURL:
-      process.env.GEMINI_API_BASE ||
-      "https://generativelanguage.googleapis.com/v1beta/openai",
-  });
+export function getGeminiEndpoint(streaming = true) {
+  const method = streaming ? "streamGenerateContent" : "generateContent";
+  return `${GEMINI_API_BASE}/models/${GEMINI_MODEL}:${method}?key=${GEMINI_API_KEY}`;
 }
