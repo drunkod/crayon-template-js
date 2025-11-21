@@ -113,29 +113,3 @@ export async function getWeather(location) {
   }
 }
 
-// OpenAI tool definition
-export const weatherTool = {
-  type: "function",
-  function: {
-    name: "get_weather",
-    description:
-      "Get current weather information for a specific location. Use this when users ask about weather, temperature, or conditions in a city.",
-    parameters: {
-      type: "object",
-      properties: {
-        location: {
-          type: "string",
-          description: "The city name (e.g., 'New York', 'London', 'Tokyo')",
-        },
-      },
-      required: ["location"],
-    },
-  },
-};
-
-// Tool executor
-export async function executeWeatherTool(args) {
-  const { location } = args;
-  const weather = await getWeather(location);
-  return JSON.stringify(weather);
-}

@@ -11,9 +11,9 @@
     "test:ci": "jest --ci"
   },
   "dependencies": {
-    "@crayonai/react-core": "latest",
-    "@crayonai/react-ui": "latest",
-    "@crayonai/stream": "latest",
+    "@crayonai/react-core": "0.7.6",
+    "@crayonai/react-ui": "0.9.2",
+    "@crayonai/stream": "0.6.4",
     "@google/genai": "^1.30.0",
     "next": "14.1.0",
     "openai": "^4.87.4",
