@@ -83,9 +83,7 @@ async function handleOpenRouterRequest(messages) {
         temperature: 0.7,
         max_tokens: 500,
       });
-      aiDebug.success(
-        `OpenRouter model worked: ${model}, streaming response`,
-      );
+      aiDebug.success(`OpenRouter model worked: ${model}, streaming response`);
       const responseStream = fromOpenAICompletion(completion);
       return sseResponse(responseStream);
     } catch (error) {
@@ -98,7 +96,10 @@ async function handleOpenRouterRequest(messages) {
     }
   }
 
-  aiDebug.error(`All ${FREE_MODELS.length} OpenRouter models failed`, lastError);
+  aiDebug.error(
+    `All ${FREE_MODELS.length} OpenRouter models failed`,
+    lastError,
+  );
   return NextResponse.json(
     {
       error: `All ${FREE_MODELS.length} OpenRouter models failed`,
@@ -109,77 +110,98 @@ async function handleOpenRouterRequest(messages) {
   );
 }
 
-// Handle REAL Gemini (Native API via SDK) streaming mode with retry logic
 async function handleGeminiRequest(messages) {
   aiDebug.log("🌐 Using REAL Gemini Native API (via SDK)");
+
   const maxRetries = 3;
+  const TIMEOUT_MS = 30000;
+  const RETRIABLE_STATUS_CODES = [429, 500, 502, 503];
+
   let lastError = null;
 
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
-      aiDebug.log(`Gemini SDK attempt ${attempt}/${maxRetries}`);
+      aiDebug.log(`Gemini attempt ${attempt}/${maxRetries}`);
 
-      // Call native Gemini API via SDK
-      const geminiResult = await callGeminiNative(messages);
-      aiDebug.success(
-        `Gemini SDK model worked on attempt ${attempt}: ${GEMINI_MODEL}`,
-      );
+      // Add timeout protection
+      const geminiResult = await Promise.race([
+        callGeminiNative(messages),
+        new Promise((_, reject) =>
+          setTimeout(
+            () =>
+              reject(new Error(`Gemini request timeout after ${TIMEOUT_MS}ms`)),
+            TIMEOUT_MS,
+          ),
+        ),
+      ]);
 
-      // Convert Gemini SDK stream to SSE format
+      aiDebug.log(`Gemini API connected on attempt ${attempt}`);
+
+      // Convert stream (this should NOT be retried if it fails)
       const responseStream = geminiStreamToSSE(geminiResult);
+
+      aiDebug.success(`Gemini stream successfully created`);
       return sseResponse(responseStream);
     } catch (error) {
       lastError = error;
 
-      // The SDK throws a GoogleGenerativeAIResponseError for API issues
-      const isRateLimitError =
-        error.constructor.name === "GoogleGenerativeAIResponseError" &&
-        error.status === 429;
+      // Determine if this is a retriable error
+      const isGeminiApiError =
+        error.constructor.name === "GoogleGenerativeAIResponseError";
 
-      if (isRateLimitError && attempt < maxRetries) {
-        // Exponential backoff: 2s, 4s, 8s
-        const waitTime = Math.pow(2, attempt) * 1000;
+      const isRetriableStatusCode =
+        isGeminiApiError && RETRIABLE_STATUS_CODES.includes(error.status);
+
+      const isTimeout = error.message?.includes("timeout");
+
+      const shouldRetry =
+        (isRetriableStatusCode || isTimeout) && attempt < maxRetries;
+
+      if (shouldRetry) {
+        // Exponential backoff: 2s, 4s, 8s for rate limits
+        // Linear backoff: 1s, 2s, 3s for other errors
+        const isRateLimit = error.status === 429;
+        const waitTime = isRateLimit
+          ? Math.pow(2, attempt) * 1000
+          : attempt * 1000;
+
         aiDebug.warn(
-          `Gemini rate limited (429), retrying in ${
-            waitTime / 1000
-          }s... (attempt ${attempt}/${maxRetries})`,
+          `Gemini ${isRateLimit ? "rate limited" : "error"} (${error.status || "timeout"}), ` +
+            `retrying in ${waitTime / 1000}s... (${attempt}/${maxRetries})`,
         );
+
         await new Promise((resolve) => setTimeout(resolve, waitTime));
-        continue; // Retry the loop
+        continue;
       }
 
-      // Log the error for debugging
-      aiDebug.error(`Gemini SDK attempt ${attempt} failed`, {
-        error: error.message,
-        details: error.details,
+      // Log non-retriable error
+      aiDebug.error(`Gemini attempt ${attempt} failed (non-retriable)`, {
+        errorType: error.constructor.name,
+        message: error.message,
         status: error.status,
       });
 
-      // If it's not a rate limit error or we've exhausted retries, break
-      break;
+      break; // Don't retry
     }
   }
 
-  // All retries failed or a non-retriable error occurred
-  const is429 =
-    lastError?.constructor.name === "GoogleGenerativeAIResponseError" &&
-    lastError?.status === 429;
+  // All retries exhausted
+  const is429 = lastError?.status === 429;
 
-  aiDebug.error(`Gemini SDK failed after ${maxRetries} attempts`, {
-    finalMessage: lastError?.message,
+  aiDebug.error(`Gemini failed after ${maxRetries} attempts`, {
+    finalError: lastError?.message,
   });
 
   return NextResponse.json(
     {
       error: is429 ? "Gemini rate limit exceeded" : "Gemini request failed",
       message: is429
-        ? "You've hit Google's rate limit. Please wait a few minutes or switch to OpenRouter."
-        : lastError?.message || "An unknown error occurred with the Gemini SDK",
-      suggestion: is429
-        ? "Set AI_PROVIDER=openrouter in your .env file for more reliable service."
-        : "Check your GEMINI_API_KEY and network connection.",
+        ? "Rate limit reached. Please wait a few minutes."
+        : "Unable to connect to Gemini API.",
+      suggestion:
+        "Try switching to OpenRouter: Set AI_PROVIDER=openrouter in .env",
       attempts: maxRetries,
     },
-    { status: is429 ? 429 : 500 },
+    { status: is429 ? 429 : 503 },
   );
 }

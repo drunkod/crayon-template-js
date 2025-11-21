@@ -2,22 +2,18 @@ import { aiDebug } from "@/lib/debug";
 import { createGeminiClient, GEMINI_MODEL, SYSTEM_PROMPT } from "./config";
 
 /**
- * Convert chat messages to Gemini's native format
- * @param {any[]} messages - The chat messages
- * @returns {import("@google/genai").Content[]}
- */
+
+Convert chat messages to Gemini's native format
+
+@param {any[]} messages - The chat messages
+
+@returns {import("@google/genai").Content[]}
+*/
 function toGeminiFormat(messages) {
   const contents = [];
 
-  // Add system prompt as first user message (Gemini doesn't have system role)
-  contents.push({
-    role: "user",
-    parts: [{ text: SYSTEM_PROMPT }],
-  });
-  contents.push({
-    role: "model",
-    parts: [{ text: "Understood. I'll follow those instructions." }],
-  });
+  // UPDATED: We no longer manually inject the system prompt here as a user message.
+  // The new SDK handles it via the config.systemInstruction parameter.
 
   // Convert messages
   for (const msg of messages) {
@@ -26,6 +22,8 @@ function toGeminiFormat(messages) {
         ? msg.content
         : msg.message || msg.text || "";
     if (!text) continue;
+
+    // Map 'assistant' to 'model'
     const role = msg.role === "assistant" ? "model" : "user";
     contents.push({
       role,
@@ -36,17 +34,16 @@ function toGeminiFormat(messages) {
 }
 
 /**
- * Call Gemini native streaming API using the SDK
- * @param {any[]} messages - The chat messages
- * @returns {Promise<import("@google/genai").GenerateContentStreamResult>}
- */
+
+Call Gemini native streaming API using the SDK
+
+@param {any[]} messages - The chat messages
+
+@returns {Promise<AsyncIterable<any>>}
+*/
 export async function callGeminiNative(messages) {
   const contents = toGeminiFormat(messages);
-  const genAI = createGeminiClient();
-  const model = genAI.getGenerativeModel({
-    model: GEMINI_MODEL,
-    // generationConfig: { temperature: 0.7, maxOutputTokens: 500 } // This is now set in handleGeminiRequest
-  });
+  const ai = createGeminiClient();
 
   aiDebug.log("🌐 Calling Gemini Native API via SDK", {
     model: GEMINI_MODEL,
@@ -54,7 +51,16 @@ export async function callGeminiNative(messages) {
   });
 
   try {
-    const result = await model.generateContentStream({ contents });
+    // UPDATED: New SDK call signature
+    // ai.models.generateContentStream({ model, contents, config })
+    const result = await ai.models.generateContentStream({
+      model: GEMINI_MODEL,
+      contents: contents,
+      config: {
+        systemInstruction: SYSTEM_PROMPT,
+        temperature: 0.7,
+      },
+    });
     return result;
   } catch (error) {
     aiDebug.error("Gemini SDK error", {
@@ -62,24 +68,30 @@ export async function callGeminiNative(messages) {
       status: error.status,
       details: error.details,
     });
-    // Re-throw a more generic error to the handler
+    // Re-throw to the handler
     throw new Error(`Gemini SDK error: ${error.message}`);
   }
 }
 
 /**
- * Convert Gemini's SDK streaming response to SSE format for Crayon
- * @param {import("@google/genai").GenerateContentStreamResult} geminiResult - The result from the SDK
- * @returns {ReadableStream<Uint8Array>}
- */
-export function geminiStreamToSSE(geminiResult) {
+
+Convert Gemini's SDK streaming response to SSE format for Crayon
+
+@param {AsyncIterable<any>} geminiStream - The iterable response from the SDK
+
+@returns {ReadableStream<Uint8Array>}
+*/
+export function geminiStreamToSSE(geminiStream) {
   const encoder = new TextEncoder();
 
   return new ReadableStream({
     async start(controller) {
       try {
-        for await (const chunk of geminiResult.stream) {
-          const text = chunk.text();
+        // UPDATED: Iterate directly over the response iterable
+        for await (const chunk of geminiStream) {
+          // UPDATED: Access .text property (getter), not .text() method
+          const text = chunk.text;
+
           if (text) {
             // Send as SSE text event
             const sseEvent = `event: text\ndata: ${text}\n\n`;
