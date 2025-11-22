@@ -1,6 +1,7 @@
 'use client';
 import { useState, useEffect } from 'react';
-import { debugLogger } from '@/lib/debug';
+import { debugLogger } from '@/lib/utils/debug';
+import { isDebugMode } from '@/lib/utils/config';
 
 export function DebugPanel() {
   const [isOpen, setIsOpen] = useState(false);
@@ -14,13 +15,11 @@ export function DebugPanel() {
     return () => clearInterval(interval);
   }, []);
 
-  if (process.env.NEXT_PUBLIC_DEBUG_MODE !== 'true') {
-    return null;
-  }
+  if (!isDebugMode()) return null;
 
   return (
     <>
-      {/* Toggle Button */}
+      {/* ... rest of component stays the same ... */}
       <button
         onClick={() => setIsOpen(!isOpen)}
         style={{
@@ -42,34 +41,28 @@ export function DebugPanel() {
         🐛 Debug ({logs.length})
       </button>
 
-      {/* Debug Panel */}
       {isOpen && (
-        <div
-          style={{
-            position: 'fixed',
-            bottom: '80px',
-            right: '20px',
-            width: '600px',
-            maxHeight: '500px',
-            background: '#1a1a1a',
-            color: '#fff',
-            borderRadius: '8px',
-            boxShadow: '0 8px 24px rgba(0,0,0,0.4)',
-            zIndex: 9998,
+        <div style={{
+          position: 'fixed',
+          bottom: '80px',
+          right: '20px',
+          width: '600px',
+          maxHeight: '500px',
+          background: '#1a1a1a',
+          color: '#fff',
+          borderRadius: '8px',
+          boxShadow: '0 8px 24px rgba(0,0,0,0.4)',
+          zIndex: 9998,
+          display: 'flex',
+          flexDirection: 'column',
+        }}>
+          <div style={{
+            padding: '12px 16px',
+            borderBottom: '1px solid #333',
             display: 'flex',
-            flexDirection: 'column',
-          }}
-        >
-          {/* Header */}
-          <div
-            style={{
-              padding: '12px 16px',
-              borderBottom: '1px solid #333',
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-            }}
-          >
+            justifyContent: 'space-between',
+            alignItems: 'center',
+          }}>
             <h3 style={{ margin: 0, fontSize: '14px', fontWeight: '600' }}>
               Debug Console
             </h3>
@@ -109,16 +102,13 @@ export function DebugPanel() {
             </div>
           </div>
 
-          {/* Logs */}
-          <div
-            style={{
-              flex: 1,
-              overflowY: 'auto',
-              padding: '8px',
-              fontSize: '12px',
-              fontFamily: 'monospace',
-            }}
-          >
+          <div style={{
+            flex: 1,
+            overflowY: 'auto',
+            padding: '8px',
+            fontSize: '12px',
+            fontFamily: 'monospace',
+          }}>
             {logs.length === 0 ? (
               <div style={{ padding: '20px', textAlign: 'center', color: '#666' }}>
                 No logs yet

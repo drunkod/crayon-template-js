@@ -1,13 +1,8 @@
 'use client';
+import { isDebugMode, isMockWeather, isMockAI, getAIProvider } from '@/lib/utils/config';
 
 export function EnvStatus() {
-  if (process.env.NEXT_PUBLIC_DEBUG_MODE !== 'true') {
-    return null;
-  }
-
-  const useMockWeather = process.env.NEXT_PUBLIC_USE_MOCK_WEATHER === 'true';
-  const useMockAI = process.env.NEXT_PUBLIC_USE_MOCK_OPENROUTER === 'true';
-  const aiProvider = process.env.NEXT_PUBLIC_AI_PROVIDER || 'openrouter';
+  if (!isDebugMode()) return null;
 
   return (
     <div
@@ -26,13 +21,15 @@ export function EnvStatus() {
       }}
     >
       <div>
-        Weather: <span style={{ color: useMockWeather ? '#fbbf24' : '#10b981' }}>
-          {useMockWeather ? '🎭 MOCK' : '🌐 REAL'}
+        Weather:{' '}
+        <span style={{ color: isMockWeather() ? '#fbbf24' : '#10b981' }}>
+          {isMockWeather() ? '🎭 MOCK' : '🌐 REAL'}
         </span>
       </div>
       <div>
-        AI: <span style={{ color: useMockAI ? '#fbbf24' : '#10b981' }}>
-          {useMockAI ? '🎭 MOCK' : `🌐 REAL (${aiProvider})`}
+        AI:{' '}
+        <span style={{ color: isMockAI() ? '#fbbf24' : '#10b981' }}>
+          {isMockAI() ? '🎭 MOCK' : `🌐 ${getAIProvider().toUpperCase()}`}
         </span>
       </div>
     </div>
